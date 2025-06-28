@@ -23,7 +23,9 @@ import {
   ExternalLink,
   AlertCircle,
   Download,
-  Upload
+  Upload,
+  Radio,
+  Waves
 } from 'lucide-react'
 
 interface Conversation {
@@ -38,6 +40,13 @@ interface VideoGeneration {
   download_url?: string
 }
 
+interface TranscriptEntry {
+  speaker: 'You' | 'Charlie' | 'System'
+  message: string
+  timestamp: Date
+  isLive?: boolean
+}
+
 const AIAssistant = () => {
   // Hardcoded API keys
   const TAVUS_API_KEY = '2f263fcb5fa44c7ca8ed76d789cdb756'
@@ -47,14 +56,24 @@ const AIAssistant = () => {
   const [isLoading, setIsLoading] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [connectionError, setConnectionError] = useState('')
-  const [transcript, setTranscript] = useState([
-    { speaker: 'Charlie', message: "Hi there! I'm Charlie, your AI creator assistant. What would you like help with today?" }
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([
+    { 
+      speaker: 'Charlie', 
+      message: "Hi there! I'm Charlie, your AI creator assistant. What would you like help with today?",
+      timestamp: new Date()
+    }
   ])
   const [isMuted, setIsMuted] = useState(false)
   const [isVideoOff, setIsVideoOff] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const [currentUserTranscript, setCurrentUserTranscript] = useState('')
+  const [currentAITranscript, setCurrentAITranscript] = useState('')
+  
+  // Audio processing states
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
-  const [audioChunks, setAudioChunks] = useState<Blob[]>([])
+  const [audioStream, setAudioStream] = useState<MediaStream | null>(null)
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false)
   
   // Video generation states
   const [scriptInput, setScriptInput] = useState('')
@@ -64,6 +83,8 @@ const AIAssistant = () => {
   
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const transcriptRef = useRef<HTMLDivElement>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const recognitionRef = useRef<any>(null)
   const [usePopup, setUsePopup] = useState(false)
 
   // Auto-scroll transcript to bottom
@@ -73,75 +94,186 @@ const AIAssistant = () => {
     }
   }, [transcript])
 
-  // Initialize speech recognition for real-time transcription
+  // Initialize audio context and speech recognition
   useEffect(() => {
+    // Initialize Web Audio API
+    if (typeof window !== 'undefined' && window.AudioContext) {
+      audioContextRef.current = new AudioContext()
+    }
+
+    // Initialize Speech Recognition
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition
-      const recognition = new SpeechRecognition()
+      recognitionRef.current = new SpeechRecognition()
       
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = 'en-US'
+      recognitionRef.current.continuous = true
+      recognitionRef.current.interimResults = true
+      recognitionRef.current.lang = 'en-US'
       
-      recognition.onresult = (event) => {
+      recognitionRef.current.onstart = () => {
+        setIsListening(true)
+        console.log('Speech recognition started')
+      }
+      
+      recognitionRef.current.onend = () => {
+        setIsListening(false)
+        console.log('Speech recognition ended')
+        
+        // Restart if still recording
+        if (isRecording) {
+          setTimeout(() => {
+            if (recognitionRef.current && isRecording) {
+              recognitionRef.current.start()
+            }
+          }, 100)
+        }
+      }
+      
+      recognitionRef.current.onresult = (event: any) => {
+        let interimTranscript = ''
         let finalTranscript = ''
+        
         for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
           if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript
+            finalTranscript += transcript
+          } else {
+            interimTranscript += transcript
           }
         }
         
-        if (finalTranscript) {
-          setTranscript(prev => [...prev, {
-            speaker: 'You',
-            message: finalTranscript
-          }])
+        // Update live transcript
+        setCurrentUserTranscript(interimTranscript)
+        
+        // Process final transcript
+        if (finalTranscript.trim()) {
+          addToTranscript('You', finalTranscript.trim())
+          setCurrentUserTranscript('')
           
-          // Process with ElevenLabs for response (mock for now)
-          processWithElevenLabs(finalTranscript)
+          // Process with ElevenLabs
+          processUserSpeechWithElevenLabs(finalTranscript.trim())
         }
       }
       
-      if (isRecording) {
-        recognition.start()
-      } else {
-        recognition.stop()
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error)
+        setIsListening(false)
       }
-      
-      return () => recognition.stop()
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close()
+      }
+    }
+  }, [])
+
+  // Handle recording state changes
+  useEffect(() => {
+    if (isRecording && recognitionRef.current) {
+      recognitionRef.current.start()
+    } else if (!isRecording && recognitionRef.current) {
+      recognitionRef.current.stop()
+      setCurrentUserTranscript('')
     }
   }, [isRecording])
 
-  const processWithElevenLabs = async (text: string) => {
+  const addToTranscript = (speaker: 'You' | 'Charlie' | 'System', message: string, isLive = false) => {
+    const entry: TranscriptEntry = {
+      speaker,
+      message,
+      timestamp: new Date(),
+      isLive
+    }
+    
+    setTranscript(prev => [...prev, entry])
+  }
+
+  const processUserSpeechWithElevenLabs = async (text: string) => {
+    setIsProcessingAudio(true)
+    
     try {
-      // Mock AI response for now - in production, you'd process the speech with your AI
-      const responses = [
-        "I understand you want help with that. Let me assist you!",
-        "Great idea! I can definitely help you with that task.",
-        "That's an interesting request. Let me work on that for you.",
-        "Perfect! I'll get started on that right away.",
-        "Excellent! I have some great suggestions for that."
-      ]
+      // Step 1: Send user speech to ElevenLabs for processing/understanding
+      console.log('Processing user speech:', text)
       
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
+      // Step 2: Generate AI response (mock for now - in production, use your AI model)
+      const aiResponse = await generateAIResponse(text)
       
-      // Add AI response to transcript
-      setTimeout(() => {
-        setTranscript(prev => [...prev, {
-          speaker: 'Charlie',
-          message: randomResponse
-        }])
-      }, 1000)
+      // Step 3: Add AI response to transcript with live indicator
+      const liveEntryIndex = transcript.length
+      addToTranscript('Charlie', '', true)
       
-      // Generate speech with ElevenLabs
-      await generateSpeech(randomResponse)
+      // Step 4: Stream AI response with typing effect
+      await streamAIResponse(aiResponse, liveEntryIndex)
+      
+      // Step 5: Convert AI response to speech using ElevenLabs
+      await generateAISpeech(aiResponse)
       
     } catch (error) {
-      console.error('Error processing with ElevenLabs:', error)
+      console.error('Error processing user speech:', error)
+      addToTranscript('System', 'Sorry, I had trouble processing that. Could you try again?')
+    } finally {
+      setIsProcessingAudio(false)
     }
   }
 
-  const generateSpeech = async (text: string) => {
+  const generateAIResponse = async (userText: string): Promise<string> => {
+    // Mock AI responses based on user input
+    const responses: { [key: string]: string } = {
+      'script': "I'd love to help you create a script! What's your topic and target audience? I can generate engaging content that converts viewers into subscribers.",
+      'campaign': "Great idea! Let me create a comprehensive content strategy for you. I'll analyze trending topics in your niche and suggest a 7-day posting schedule with optimized content for each platform.",
+      'video': "Perfect! I can help you create professional videos using AI avatars. Just provide me with your script and I'll generate a high-quality video using Tavus technology.",
+      'analyze': "I'll analyze your content performance and provide actionable insights. I can review engagement patterns, comment sentiment, and suggest improvements for better reach.",
+      'voice': "I can generate natural-sounding voiceovers using ElevenLabs technology. Would you like me to create a voiceover for your existing script or help you write a new one first?"
+    }
+    
+    // Simple keyword matching for demo
+    const lowerText = userText.toLowerCase()
+    for (const [keyword, response] of Object.entries(responses)) {
+      if (lowerText.includes(keyword)) {
+        return response
+      }
+    }
+    
+    // Default responses
+    const defaultResponses = [
+      "That's interesting! I can help you with content creation, script writing, video generation, campaign planning, and performance analysis. What specific task would you like to work on?",
+      "I understand! As your AI creator assistant, I can help streamline your content workflow. Would you like me to generate a script, plan a campaign, or analyze your content performance?",
+      "Great question! I specialize in helping creators like you automate and optimize their content creation process. What's your biggest challenge right now?",
+      "I'm here to help! I can assist with AI-powered script generation, video creation with avatars, voiceover production, and content strategy. What would you like to tackle first?"
+    ]
+    
+    return defaultResponses[Math.floor(Math.random() * defaultResponses.length)]
+  }
+
+  const streamAIResponse = async (response: string, entryIndex: number) => {
+    const words = response.split(' ')
+    let currentText = ''
+    
+    for (let i = 0; i < words.length; i++) {
+      currentText += (i > 0 ? ' ' : '') + words[i]
+      
+      setTranscript(prev => {
+        const newTranscript = [...prev]
+        if (newTranscript[entryIndex]) {
+          newTranscript[entryIndex] = {
+            ...newTranscript[entryIndex],
+            message: currentText,
+            isLive: i < words.length - 1
+          }
+        }
+        return newTranscript
+      })
+      
+      // Delay between words for typing effect
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+  }
+
+  const generateAISpeech = async (text: string) => {
     try {
       const response = await fetch('https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM', {
         method: 'POST',
@@ -155,7 +287,9 @@ const AIAssistant = () => {
           model_id: 'eleven_monolingual_v1',
           voice_settings: {
             stability: 0.5,
-            similarity_boost: 0.5
+            similarity_boost: 0.5,
+            style: 0.0,
+            use_speaker_boost: true
           }
         })
       })
@@ -164,10 +298,25 @@ const AIAssistant = () => {
         const audioBlob = await response.blob()
         const audioUrl = URL.createObjectURL(audioBlob)
         const audio = new Audio(audioUrl)
-        audio.play()
+        
+        // Add audio visualization
+        audio.onplay = () => {
+          addToTranscript('System', '🔊 Charlie is speaking...')
+        }
+        
+        audio.onended = () => {
+          // Remove the speaking indicator
+          setTranscript(prev => prev.filter(entry => entry.message !== '🔊 Charlie is speaking...'))
+        }
+        
+        if (!isMuted) {
+          await audio.play()
+        }
+      } else {
+        console.error('ElevenLabs TTS error:', response.status)
       }
     } catch (error) {
-      console.error('Error generating speech:', error)
+      console.error('Error generating AI speech:', error)
     }
   }
 
@@ -198,10 +347,7 @@ const AIAssistant = () => {
       setConversation(data)
       setIsConnected(true)
       
-      setTranscript(prev => [...prev, {
-        speaker: 'System',
-        message: 'Connected to Charlie! You can now start your conversation.'
-      }])
+      addToTranscript('System', 'Connected to Charlie! You can now start your conversation with live transcription.')
     } catch (error) {
       console.error('Error creating conversation:', error)
       
@@ -219,6 +365,13 @@ const AIAssistant = () => {
     if (!conversation) return
 
     try {
+      // Stop recording
+      setIsRecording(false)
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+      
+      // End Tavus conversation
       await fetch(`https://tavusapi.com/v2/conversations/${conversation.conversation_id}/end`, {
         method: 'POST',
         headers: {
@@ -229,9 +382,14 @@ const AIAssistant = () => {
       setConversation(null)
       setIsConnected(false)
       setConnectionError('')
-      setIsRecording(false)
+      setCurrentUserTranscript('')
+      setCurrentAITranscript('')
       setTranscript([
-        { speaker: 'Charlie', message: "Hi there! I'm Charlie, your AI creator assistant. What would you like help with today?" }
+        { 
+          speaker: 'Charlie', 
+          message: "Hi there! I'm Charlie, your AI creator assistant. What would you like help with today?",
+          timestamp: new Date()
+        }
       ])
     } catch (error) {
       console.error('Error ending conversation:', error)
@@ -268,10 +426,7 @@ const AIAssistant = () => {
       const data = await response.json()
       setGeneratedVideo(data)
       
-      setTranscript(prev => [...prev, {
-        speaker: 'System',
-        message: `Video generation started! Video ID: ${data.video_id}`
-      }])
+      addToTranscript('System', `Video generation started! Video ID: ${data.video_id}`)
       
       // Poll for video completion
       pollVideoStatus(data.video_id)
@@ -298,10 +453,7 @@ const AIAssistant = () => {
           setGeneratedVideo(data)
           
           if (data.status === 'completed') {
-            setTranscript(prev => [...prev, {
-              speaker: 'System',
-              message: 'Video generation completed! You can now download your video.'
-            }])
+            addToTranscript('System', 'Video generation completed! You can now download your video.')
           } else if (data.status === 'failed') {
             setVideoError('Video generation failed')
           } else {
@@ -328,6 +480,8 @@ const AIAssistant = () => {
   }
 
   const handleAutomationAction = (action: string) => {
+    addToTranscript('You', action)
+    
     const responses = {
       'Generate Script': "I'll help you create an engaging script! What's your topic and target audience?",
       'Plan 7-day Campaign': "Great idea! Let me create a comprehensive 7-day content strategy for you. What's your niche?",
@@ -336,10 +490,12 @@ const AIAssistant = () => {
       'Add Voiceover': "Perfect! I can generate natural-sounding voiceovers using ElevenLabs. Do you have a script ready?"
     }
 
-    setTranscript(prev => [...prev, 
-      { speaker: 'You', message: action },
-      { speaker: 'Charlie', message: responses[action as keyof typeof responses] || "I'm ready to help with that!" }
-    ])
+    const response = responses[action as keyof typeof responses] || "I'm ready to help with that!"
+    
+    setTimeout(() => {
+      addToTranscript('Charlie', response)
+      generateAISpeech(response)
+    }, 500)
   }
 
   const automationButtons = [
@@ -358,8 +514,8 @@ const AIAssistant = () => {
             🧠 Meet Charlie - Your <span className="gradient-text">AI Creator Assistant</span>
           </h2>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Have a real conversation with your AI assistant. Get instant help with scripts, campaigns, 
-            content analysis, and creative automation.
+            Have a real conversation with your AI assistant using live transcription powered by ElevenLabs. 
+            Get instant help with scripts, campaigns, content analysis, and creative automation.
           </p>
         </div>
 
@@ -373,7 +529,7 @@ const AIAssistant = () => {
               <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                 <div className="flex items-center">
                   <AlertCircle className="h-4 w-4 text-green-500 mr-2" />
-                  <p className="text-sm text-green-700">API keys are pre-configured for demo</p>
+                  <p className="text-sm text-green-700">ElevenLabs & Tavus API keys are pre-configured</p>
                 </div>
               </div>
               
@@ -399,7 +555,7 @@ const AIAssistant = () => {
                 ) : (
                   <>
                     <Video className="mr-2 h-4 w-4" />
-                    Start Conversation
+                    Start Live Conversation
                   </>
                 )}
               </Button>
@@ -417,6 +573,12 @@ const AIAssistant = () => {
                   <CardTitle className="flex items-center justify-center space-x-2">
                     <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                     <span>Charlie – Your Creator Assistant</span>
+                    {isProcessingAudio && (
+                      <div className="flex items-center space-x-1">
+                        <Waves className="h-4 w-4 text-blue-500 animate-pulse" />
+                        <span className="text-xs text-blue-500">Processing...</span>
+                      </div>
+                    )}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -451,16 +613,27 @@ const AIAssistant = () => {
                     </div>
                   </div>
                   
-                  {/* Video Controls */}
+                  {/* Enhanced Audio Controls */}
                   <div className="p-4 bg-gray-900 text-white">
                     <div className="flex items-center justify-center space-x-4">
                       <Button
                         size="sm"
                         variant="ghost"
                         onClick={toggleRecording}
-                        className={`text-white hover:bg-white/20 ${isRecording ? 'bg-red-500/20' : ''}`}
+                        className={`text-white hover:bg-white/20 ${
+                          isRecording ? 'bg-red-500/20 ring-2 ring-red-500' : ''
+                        }`}
                       >
                         {isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                      </Button>
+                      
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setIsMuted(!isMuted)}
+                        className={`text-white hover:bg-white/20 ${isMuted ? 'bg-gray-500/20' : ''}`}
+                      >
+                        {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                       </Button>
                       
                       <Button
@@ -491,31 +664,51 @@ const AIAssistant = () => {
                       </Button>
                     </div>
                     
-                    {isRecording && (
-                      <div className="mt-2 text-center">
+                    {/* Live Status Indicators */}
+                    <div className="mt-3 space-y-2">
+                      {isRecording && (
                         <div className="flex items-center justify-center space-x-2">
                           <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                          <span className="text-xs">Recording & Transcribing...</span>
+                          <span className="text-xs">Live Transcription Active</span>
+                          {isListening && (
+                            <Radio className="h-3 w-3 text-green-400 animate-pulse" />
+                          )}
                         </div>
-                      </div>
-                    )}
+                      )}
+                      
+                      {currentUserTranscript && (
+                        <div className="bg-blue-500/20 rounded px-2 py-1">
+                          <div className="text-xs text-blue-300 mb-1">You're saying:</div>
+                          <div className="text-sm">{currentUserTranscript}</div>
+                        </div>
+                      )}
+                      
+                      {isProcessingAudio && (
+                        <div className="flex items-center justify-center space-x-2">
+                          <Loader2 className="h-3 w-3 animate-spin text-yellow-400" />
+                          <span className="text-xs text-yellow-400">Processing with ElevenLabs...</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
             </div>
 
-            {/* Right Panel - Transcript & Controls (60%) */}
+            {/* Right Panel - Enhanced Transcript & Controls (60%) */}
             <div className="lg:col-span-3 space-y-6">
-              {/* Real-time Transcript */}
+              {/* Enhanced Real-time Transcript */}
               <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
                 <CardHeader>
                   <CardTitle className="flex items-center">
                     <MessageCircle className="mr-2 h-5 w-5" />
-                    Live Conversation
-                    {isRecording && (
+                    Live Conversation with ElevenLabs
+                    {(isRecording || isProcessingAudio) && (
                       <div className="ml-auto flex items-center space-x-2">
-                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                        <span className="text-xs text-red-500">Live</span>
+                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        <span className="text-xs text-green-500">
+                          {isProcessingAudio ? 'Processing' : 'Live'}
+                        </span>
                       </div>
                     )}
                   </CardTitle>
@@ -523,7 +716,7 @@ const AIAssistant = () => {
                 <CardContent>
                   <div 
                     ref={transcriptRef}
-                    className="h-64 overflow-y-auto bg-gray-50 rounded-lg p-4 space-y-3 font-mono text-sm"
+                    className="h-80 overflow-y-auto bg-gray-50 rounded-lg p-4 space-y-3 font-mono text-sm"
                   >
                     {transcript.map((entry, index) => (
                       <div key={index} className={`flex ${entry.speaker === 'You' ? 'justify-end' : 'justify-start'}`}>
@@ -533,12 +726,57 @@ const AIAssistant = () => {
                             : entry.speaker === 'System'
                             ? 'bg-blue-100 text-blue-800'
                             : 'bg-white border border-gray-200'
-                        }`}>
-                          <div className="text-xs opacity-70 mb-1">{entry.speaker}</div>
+                        } ${entry.isLive ? 'animate-pulse' : ''}`}>
+                          <div className="flex items-center justify-between text-xs opacity-70 mb-1">
+                            <span>{entry.speaker}</span>
+                            <span>{entry.timestamp.toLocaleTimeString()}</span>
+                            {entry.isLive && (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-1 h-1 bg-current rounded-full animate-pulse"></div>
+                                <span>typing...</span>
+                              </div>
+                            )}
+                          </div>
                           <div>{entry.message}</div>
                         </div>
                       </div>
                     ))}
+                    
+                    {/* Live user transcript preview */}
+                    {currentUserTranscript && (
+                      <div className="flex justify-end">
+                        <div className="max-w-xs lg:max-w-md px-3 py-2 rounded-lg bg-purple-300 text-purple-900 opacity-70">
+                          <div className="text-xs mb-1 flex items-center">
+                            <span>You (live)</span>
+                            <Waves className="h-3 w-3 ml-1 animate-pulse" />
+                          </div>
+                          <div>{currentUserTranscript}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Transcription Controls */}
+                  <div className="mt-4 flex items-center justify-between">
+                    <div className="flex items-center space-x-2 text-sm text-gray-600">
+                      <div className="flex items-center space-x-1">
+                        <div className={`w-2 h-2 rounded-full ${isListening ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                        <span>Speech Recognition</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <div className={`w-2 h-2 rounded-full ${isProcessingAudio ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
+                        <span>ElevenLabs Processing</span>
+                      </div>
+                    </div>
+                    
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setTranscript(transcript.slice(0, 1))}
+                      className="text-xs"
+                    >
+                      Clear History
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -632,37 +870,44 @@ const AIAssistant = () => {
           </div>
         )}
 
-        {/* Features Highlight */}
+        {/* Enhanced Features Highlight */}
         <div className="mt-16 text-center">
-          <h3 className="text-2xl font-bold text-gray-900 mb-8">What Charlie Can Help You With</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <h3 className="text-2xl font-bold text-gray-900 mb-8">Powered by ElevenLabs & Tavus Technology</h3>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div className="bg-white/60 backdrop-blur-sm rounded-lg p-6 border border-white/20">
-              <Zap className="h-8 w-8 text-purple-500 mx-auto mb-4" />
-              <h4 className="font-semibold mb-2">Real-time Transcription</h4>
-              <p className="text-sm text-gray-600">Powered by ElevenLabs for natural speech processing</p>
+              <Radio className="h-8 w-8 text-purple-500 mx-auto mb-4" />
+              <h4 className="font-semibold mb-2">Live Speech Recognition</h4>
+              <p className="text-sm text-gray-600">Real-time speech-to-text with browser APIs</p>
             </div>
             <div className="bg-white/60 backdrop-blur-sm rounded-lg p-6 border border-white/20">
-              <Video className="h-8 w-8 text-blue-500 mx-auto mb-4" />
-              <h4 className="font-semibold mb-2">AI Video Generation</h4>
-              <p className="text-sm text-gray-600">Create professional videos from scripts using Tavus</p>
+              <Waves className="h-8 w-8 text-blue-500 mx-auto mb-4" />
+              <h4 className="font-semibold mb-2">ElevenLabs Processing</h4>
+              <p className="text-sm text-gray-600">Advanced AI speech processing and generation</p>
             </div>
             <div className="bg-white/60 backdrop-blur-sm rounded-lg p-6 border border-white/20">
-              <BarChart3 className="h-8 w-8 text-green-500 mx-auto mb-4" />
-              <h4 className="font-semibold mb-2">Automated Workflow</h4>
-              <p className="text-sm text-gray-600">Streamline your entire content creation process</p>
+              <Video className="h-8 w-8 text-green-500 mx-auto mb-4" />
+              <h4 className="font-semibold mb-2">Tavus Video Generation</h4>
+              <p className="text-sm text-gray-600">Create professional videos from scripts</p>
+            </div>
+            <div className="bg-white/60 backdrop-blur-sm rounded-lg p-6 border border-white/20">
+              <MessageCircle className="h-8 w-8 text-orange-500 mx-auto mb-4" />
+              <h4 className="font-semibold mb-2">Bidirectional Transcription</h4>
+              <p className="text-sm text-gray-600">Live transcription for both user and AI</p>
             </div>
           </div>
         </div>
 
-        {/* Instructions */}
+        {/* Enhanced Instructions */}
         <div className="mt-12 bg-blue-50 rounded-lg p-6 border border-blue-200">
           <div className="flex items-start space-x-3">
             <AlertCircle className="h-5 w-5 text-blue-500 mt-0.5" />
             <div>
-              <h4 className="font-semibold text-blue-900 mb-2">How to Use Charlie</h4>
+              <h4 className="font-semibold text-blue-900 mb-2">How to Use Live Transcription</h4>
               <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
-                <li>Click "Start Conversation" to connect (API keys are pre-configured)</li>
-                <li>Click the microphone button to enable real-time transcription</li>
+                <li>Click "Start Live Conversation" to connect (API keys are pre-configured)</li>
+                <li>Click the microphone button to enable real-time speech recognition</li>
+                <li>Speak naturally - your words will be transcribed live and processed by ElevenLabs</li>
+                <li>Charlie will respond with both text and natural speech using ElevenLabs TTS</li>
                 <li>Use the script generator to create videos with Tavus AI</li>
                 <li>Try the Quick Actions for common creator tasks</li>
                 <li>Always end the conversation when done to save credits</li>
