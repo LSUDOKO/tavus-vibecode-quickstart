@@ -18,7 +18,9 @@ import {
   Calendar,
   RotateCcw,
   BarChart3,
-  Mic2
+  Mic2,
+  ExternalLink,
+  AlertCircle
 } from 'lucide-react'
 
 interface Conversation {
@@ -32,6 +34,7 @@ const AIAssistant = () => {
   const [conversation, setConversation] = useState<Conversation | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
+  const [connectionError, setConnectionError] = useState('')
   const [transcript, setTranscript] = useState([
     { speaker: 'Charlie', message: "Hi there! I'm Charlie, your AI creator assistant. What would you like help with today?" }
   ])
@@ -39,6 +42,7 @@ const AIAssistant = () => {
   const [isVideoOff, setIsVideoOff] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const transcriptRef = useRef<HTMLDivElement>(null)
+  const [usePopup, setUsePopup] = useState(false)
 
   // Auto-scroll transcript to bottom
   useEffect(() => {
@@ -54,6 +58,8 @@ const AIAssistant = () => {
     }
 
     setIsLoading(true)
+    setConnectionError('')
+    
     try {
       const response = await fetch('https://tavusapi.com/v2/conversations', {
         method: 'POST',
@@ -69,7 +75,8 @@ const AIAssistant = () => {
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        const errorData = await response.text()
+        throw new Error(`HTTP error! status: ${response.status} - ${errorData}`)
       }
 
       const data = await response.json()
@@ -83,7 +90,7 @@ const AIAssistant = () => {
       }])
     } catch (error) {
       console.error('Error creating conversation:', error)
-      alert('Failed to create conversation. Please check your API key and try again.')
+      setConnectionError(error instanceof Error ? error.message : 'Failed to create conversation')
     } finally {
       setIsLoading(false)
     }
@@ -102,11 +109,18 @@ const AIAssistant = () => {
       
       setConversation(null)
       setIsConnected(false)
+      setConnectionError('')
       setTranscript([
         { speaker: 'Charlie', message: "Hi there! I'm Charlie, your AI creator assistant. What would you like help with today?" }
       ])
     } catch (error) {
       console.error('Error ending conversation:', error)
+    }
+  }
+
+  const openInNewWindow = () => {
+    if (conversation?.conversation_url) {
+      window.open(conversation.conversation_url, '_blank', 'width=800,height=600,scrollbars=yes,resizable=yes')
     }
   }
 
@@ -134,7 +148,7 @@ const AIAssistant = () => {
   ]
 
   return (
-    <section className="py-20 bg-gradient-to-br from-purple-50 via-blue-50 to-pink-50">
+    <section id="ai-assistant" className="py-20 bg-gradient-to-br from-purple-50 via-blue-50 to-pink-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16">
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
@@ -171,6 +185,16 @@ const AIAssistant = () => {
                   Get one here
                 </a>
               </p>
+              
+              {connectionError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <div className="flex items-center">
+                    <AlertCircle className="h-4 w-4 text-red-500 mr-2" />
+                    <p className="text-sm text-red-700">{connectionError}</p>
+                  </div>
+                </div>
+              )}
+              
               <Button 
                 onClick={createConversation}
                 disabled={isLoading || !apiKey.trim()}
@@ -205,15 +229,35 @@ const AIAssistant = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
-                  {/* Tavus Video Embed */}
+                  {/* Tavus Video Embed with Fallback */}
                   <div className="relative aspect-video bg-gradient-to-br from-purple-900 to-blue-900">
                     <iframe
                       ref={iframeRef}
                       src={conversation.conversation_url}
-                      allow="camera; microphone; fullscreen; display-capture"
+                      allow="camera; microphone; fullscreen; display-capture; autoplay"
                       className="w-full h-full"
                       style={{ border: 'none' }}
+                      sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals"
+                      onError={() => setUsePopup(true)}
                     />
+                    
+                    {/* Fallback overlay if iframe fails */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-purple-900/90 to-blue-900/90 flex items-center justify-center">
+                      <div className="text-center text-white p-6">
+                        <Video className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                        <h3 className="text-lg font-semibold mb-2">Charlie is Ready!</h3>
+                        <p className="text-sm opacity-80 mb-4">
+                          Due to browser security, the video chat needs to open in a new window.
+                        </p>
+                        <Button 
+                          onClick={openInNewWindow}
+                          className="bg-white/20 hover:bg-white/30 text-white border border-white/30"
+                        >
+                          <ExternalLink className="mr-2 h-4 w-4" />
+                          Open Video Chat
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                   
                   {/* Video Controls */}
@@ -235,6 +279,15 @@ const AIAssistant = () => {
                         className="text-white hover:bg-white/20"
                       >
                         {isVideoOff ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
+                      </Button>
+                      
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={openInNewWindow}
+                        className="text-blue-400 hover:bg-blue-500/20"
+                      >
+                        <ExternalLink className="h-4 w-4" />
                       </Button>
                       
                       <Button
@@ -352,6 +405,23 @@ const AIAssistant = () => {
               <BarChart3 className="h-8 w-8 text-green-500 mx-auto mb-4" />
               <h4 className="font-semibold mb-2">Performance Analysis</h4>
               <p className="text-sm text-gray-600">Get insights on your content performance and audience</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Instructions */}
+        <div className="mt-12 bg-blue-50 rounded-lg p-6 border border-blue-200">
+          <div className="flex items-start space-x-3">
+            <AlertCircle className="h-5 w-5 text-blue-500 mt-0.5" />
+            <div>
+              <h4 className="font-semibold text-blue-900 mb-2">How to Use Charlie</h4>
+              <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
+                <li>Enter your Tavus API key to connect</li>
+                <li>Click "Start Conversation" to create a new session</li>
+                <li>If the video doesn't load, click "Open Video Chat" to use a popup window</li>
+                <li>Use the Quick Actions buttons for common tasks</li>
+                <li>Always end the conversation when done to save credits</li>
+              </ol>
             </div>
           </div>
         </div>
