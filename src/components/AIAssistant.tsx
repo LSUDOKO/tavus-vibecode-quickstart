@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import { useAtomValue } from 'jotai'
+import { apiTokenAtom } from '@/store/tokens'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -48,8 +50,10 @@ interface TranscriptEntry {
 }
 
 const AIAssistant = () => {
-  // Hardcoded API keys
-  const TAVUS_API_KEY = '2f263fcb5fa44c7ca8ed76d789cdb756'
+  // Get API token from application state
+  const token = useAtomValue(apiTokenAtom)
+  
+  // Hardcoded ElevenLabs API key (keeping this as it's separate from Tavus)
   const ELEVENLABS_API_KEY = 'sk_a8ed6d3d1a8d8a1c3fa2014be425a6c7da7570f5086470bc'
   
   const [conversation, setConversation] = useState<Conversation | null>(null)
@@ -321,6 +325,12 @@ const AIAssistant = () => {
   }
 
   const createConversation = async () => {
+    // Check if API token is available
+    if (!token) {
+      setConnectionError('Please set your Tavus API key in the application settings before starting a conversation.')
+      return
+    }
+
     setIsLoading(true)
     setConnectionError('')
     
@@ -329,7 +339,7 @@ const AIAssistant = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': TAVUS_API_KEY
+          'x-api-key': token
         },
         body: JSON.stringify({
           persona_id: 'pd43ffef',
@@ -362,7 +372,7 @@ const AIAssistant = () => {
   }
 
   const endConversation = async () => {
-    if (!conversation) return
+    if (!conversation || !token) return
 
     try {
       // Stop recording
@@ -375,7 +385,7 @@ const AIAssistant = () => {
       await fetch(`https://tavusapi.com/v2/conversations/${conversation.conversation_id}/end`, {
         method: 'POST',
         headers: {
-          'x-api-key': TAVUS_API_KEY
+          'x-api-key': token
         }
       })
       
@@ -397,6 +407,12 @@ const AIAssistant = () => {
   }
 
   const generateVideo = async () => {
+    // Check if API token is available
+    if (!token) {
+      setVideoError('Please set your Tavus API key in the application settings before generating videos.')
+      return
+    }
+
     if (!scriptInput.trim()) {
       setVideoError('Please enter a script first')
       return
@@ -410,7 +426,7 @@ const AIAssistant = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': TAVUS_API_KEY
+          'x-api-key': token
         },
         body: JSON.stringify({
           replica_id: 'rb17cf590e15',
@@ -440,11 +456,13 @@ const AIAssistant = () => {
   }
 
   const pollVideoStatus = async (videoId: string) => {
+    if (!token) return
+
     const checkStatus = async () => {
       try {
         const response = await fetch(`https://tavusapi.com/v2/videos/${videoId}`, {
           headers: {
-            'x-api-key': TAVUS_API_KEY
+            'x-api-key': token
           }
         })
         
@@ -526,12 +544,21 @@ const AIAssistant = () => {
               <CardTitle className="text-center">Connect to Charlie</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                <div className="flex items-center">
-                  <AlertCircle className="h-4 w-4 text-green-500 mr-2" />
-                  <p className="text-sm text-green-700">ElevenLabs & Tavus API keys are pre-configured</p>
+              {!token ? (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                  <div className="flex items-center">
+                    <AlertCircle className="h-4 w-4 text-yellow-500 mr-2" />
+                    <p className="text-sm text-yellow-700">Please set your Tavus API key in the application settings first</p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="flex items-center">
+                    <AlertCircle className="h-4 w-4 text-green-500 mr-2" />
+                    <p className="text-sm text-green-700">Tavus API key configured - ready to connect!</p>
+                  </div>
+                </div>
+              )}
               
               {connectionError && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-3">
@@ -544,7 +571,7 @@ const AIAssistant = () => {
               
               <Button 
                 onClick={createConversation}
-                disabled={isLoading}
+                disabled={isLoading || !token}
                 className="w-full gradient-bg text-white"
               >
                 {isLoading ? (
@@ -802,7 +829,7 @@ const AIAssistant = () => {
                   
                   <Button
                     onClick={generateVideo}
-                    disabled={isGeneratingVideo || !scriptInput.trim()}
+                    disabled={isGeneratingVideo || !scriptInput.trim() || !token}
                     className="w-full gradient-bg text-white"
                   >
                     {isGeneratingVideo ? (
@@ -904,7 +931,8 @@ const AIAssistant = () => {
             <div>
               <h4 className="font-semibold text-blue-900 mb-2">How to Use Live Transcription</h4>
               <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
-                <li>Click "Start Live Conversation" to connect (API keys are pre-configured)</li>
+                <li>Set your Tavus API key in the application settings first</li>
+                <li>Click "Start Live Conversation" to connect with your personal API key</li>
                 <li>Click the microphone button to enable real-time speech recognition</li>
                 <li>Speak naturally - your words will be transcribed live and processed by ElevenLabs</li>
                 <li>Charlie will respond with both text and natural speech using ElevenLabs TTS</li>
