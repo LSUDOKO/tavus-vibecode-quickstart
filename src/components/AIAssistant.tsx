@@ -90,7 +90,13 @@ const AIAssistant = () => {
       }])
     } catch (error) {
       console.error('Error creating conversation:', error)
-      setConnectionError(error instanceof Error ? error.message : 'Failed to create conversation')
+      
+      // Check for specific concurrent conversations error
+      if (error instanceof Error && error.message.includes('User has reached maximum concurrent conversations')) {
+        setConnectionError('You already have an active conversation. Please end it using the phone icon before starting a new one.')
+      } else {
+        setConnectionError(error instanceof Error ? error.message : 'Failed to create conversation')
+      }
     } finally {
       setIsLoading(false)
     }
