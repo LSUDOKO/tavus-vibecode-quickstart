@@ -1,51 +1,30 @@
-import { useAtom } from "jotai";
-import { screenAtom } from "./store/screens";
-import { Header } from "./components/Header";
-import { Footer } from "./components/Footer";
-import {
-  IntroLoading,
-  Outage,
-  OutOfMinutes,
-  Intro,
-  Instructions,
-  Conversation,
-  FinalScreen,
-  Settings,
-} from "./screens";
+import { Routes, Route } from 'react-router-dom'
+import Header from './components/Layout/Header'
+import Footer from './components/Layout/Footer'
+import Home from './pages/Home'
+import Features from './pages/Features'
+import Startups from './pages/Startups'
+import Pricing from './pages/Pricing'
+import Demo from './pages/Demo'
+import Tavus from './pages/Tavus'
 
 function App() {
-  const [{ currentScreen }] = useAtom(screenAtom);
-
-  const renderScreen = () => {
-    switch (currentScreen) {
-      case "introLoading":
-        return <IntroLoading />;
-      case "outage":
-        return <Outage />;
-      case "outOfMinutes":
-        return <OutOfMinutes />;
-      case "intro":
-        return <Intro />;
-      case "settings":
-        return <Settings />;
-      case "instructions":
-        return <Instructions />;
-      case "conversation":
-        return <Conversation />;
-      case "finalScreen":
-        return <FinalScreen />;
-      default:
-        return <IntroLoading />;
-    }
-  };
-
   return (
-    <main className="flex h-svh flex-col items-center justify-between gap-3 p-5 sm:gap-4 lg:p-8 bg-black">
-      {currentScreen !== "introLoading" && <Header />}
-      {renderScreen()}
-      {currentScreen !== "introLoading" && <Footer />}
-    </main>
-  );
+    <div className="min-h-screen flex flex-col">
+      <Header />
+      <main className="flex-1">
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/features" element={<Features />} />
+          <Route path="/startups" element={<Startups />} />
+          <Route path="/pricing" element={<Pricing />} />
+          <Route path="/demo" element={<Demo />} />
+          <Route path="/tavus" element={<Tavus />} />
+        </Routes>
+      </main>
+      <Footer />
+    </div>
+  )
 }
 
-export default App;
+export default App
