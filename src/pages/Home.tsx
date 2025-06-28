@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import AIAssistant from '@/components/AIAssistant'
 import { 
   PenTool, 
   Mic, 
@@ -123,6 +124,9 @@ const Home = () => {
           </div>
         </div>
       </section>
+
+      {/* AI Assistant Section */}
+      <AIAssistant />
 
       {/* Features Grid */}
       <section className="py-20 bg-white">
